@@ -19,11 +19,13 @@
     <div class="gauge"><label>ALT <span>ft</span></label><b id="alt">0</b></div>
     <div class="gauge"><label>HDG</label><b id="heading">000° N</b></div>
     <div class="gauge"><label>THR</label><b id="throttle">0%</b></div>
+    <div class="gauge" id="wind-gauge" style="display:none"><label>WIND</label><b id="wind">0 kt</b></div>
   </div>
   <div class="hud-right">
     <canvas id="minimap" width="150" height="150" aria-label="Chart"></canvas>
     <div class="gauge"><label>SCORE</label><b id="score">0</b></div>
     <div class="gauge"><label>RINGS</label><b id="rings">0/6</b></div>
+    <div class="gauge"><label>COMBO</label><b id="combo">×1.00</b></div>
     <div class="gauge"><label>TIME</label><b id="timer">4:00</b></div>
   </div>
   <div class="hud-bottom">
@@ -32,6 +34,7 @@
     <div class="sortie-tag" id="sortie-name">Island Hop</div>
   </div>
   <div id="message" role="status"></div>
+  <div id="stall" role="alert">⚠ STALL — nose down, throttle up!</div>
 </div>
 
 <!-- Title / pause / results overlay -->

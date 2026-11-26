@@ -47,6 +47,15 @@ body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; color: #f5
   white-space: nowrap;
 }
 #message.visible { opacity: 1; }
+#combo.hot { color: #7dff9a; text-shadow: 0 0 10px rgba(80, 255, 140, 0.75); }
+#stall {
+  position: absolute; top: 128px; left: 50%; transform: translateX(-50%);
+  font-size: 19px; font-weight: 800; letter-spacing: 0.1em; color: #ff5a4a;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.85); opacity: 0; transition: opacity 0.15s;
+  white-space: nowrap;
+}
+#stall.visible { opacity: 1; animation: stallblink 0.5s steps(2) infinite; }
+@keyframes stallblink { 50% { opacity: 0.35; } }
 
 /* ---------- Overlay ---------- */
 #overlay {
@@ -93,6 +102,27 @@ body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; color: #f5
 }
 .action-btn:hover { background: #ffd75e; }
 .controls-hint { font-size: 12px !important; color: #9db8c6 !important; margin-bottom: 0 !important; }
+
+/* ---------- Hangar (title-screen upgrades) ---------- */
+.hangar { margin-bottom: 14px; }
+.hangar-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px; letter-spacing: 0.12em; color: #9db8c6; margin-bottom: 8px;
+}
+.hangar-head b { font-size: 15px; color: #ffc233; font-variant-numeric: tabular-nums; }
+.hangar-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.upgrade-btn {
+  display: flex; flex-direction: column; gap: 3px; text-align: left;
+  background: rgba(255, 255, 255, 0.06); color: #f5f2e8;
+  border: 1px solid rgba(255, 194, 51, 0.35); border-radius: 10px; padding: 10px 12px;
+  cursor: pointer; font-family: inherit; transition: background 0.15s, border-color 0.15s;
+}
+.upgrade-btn:hover:not(:disabled) { background: rgba(255, 194, 51, 0.14); border-color: #ffc233; }
+.upgrade-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.upgrade-name { font-size: 14px; font-weight: 700; }
+.upgrade-pips { font-size: 11px; color: #ffc233; letter-spacing: 0.2em; }
+.upgrade-blurb { font-size: 11px; line-height: 1.4; color: #c4d8e4; }
+.upgrade-cost { font-size: 12px; font-weight: 700; color: #7be495; }
 
 /* ---------- Touch pad & misc ---------- */
 #touch-pad {

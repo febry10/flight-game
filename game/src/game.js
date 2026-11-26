@@ -1,9 +1,16 @@
-// Sky Courier — game state, flight physics, missions and scoring.
-// The plane flies an arcade model: throttle sets target speed, banking
-// turns, pitching climbs and dives, and slow flight stalls. Rings, fuel,
-// damage and landings turn a flight into decisions, not just sightseeing.
-import { PLANE, RING, SCORE, SORTIES, WORLD } from './config.js';
-import { clamp, lerp } from './random.js';
+// Sky Courier — game state and orchestration.
+// The Game owns the sortie state (score, fuel, damage, combo, plane) and
+// the phase machine; the moving parts live in their own modules: the
+// flight model integrates the physics (flightmodel.js), the mission
+// rules judge rings, damage and landings (missions.js), the camera
+// poses sit in camera.js, wind and hours in weather.js, and the hangar
+// upgrades in upgrades.js. This file wires them together per frame.
+import { COMBO, RING, SCORE, SORTIES, WORLD } from './config.js';
+import { chaseCameraPose, titleCameraPose } from './camera.js';
+import { integrateFlight } from './flightmodel.js';
+import { MissionRules } from './missions.js';
+import { buyUpgrade, effectivePlane, loadHangar, saveHangar } from './upgrades.js';
+import { Wind } from './weather.js';
 import { terrainHeight } from './world.js';
 
 export const PHASE = {
@@ -17,13 +24,17 @@ export const PHASE = {
 };
 
 export class Game {
-  constructor(world, audio, onEvent) {
+  constructor(world, audio, onEvent, effects) {
     this.world = world;
     this.audio = audio;
+    this.effects = effects || null;
     this.onEvent = onEvent || (() => {});
+    this.rules = new MissionRules(this);
     this.sortieIndex = 0;
     this.unlocked = 1; // sorties unlocked (1-based count)
     this.best = this.loadBest();
+    this.hangar = loadHangar();
+    this.elapsed = 0;
     this.resetToTitle();
   }
 
@@ -49,10 +60,16 @@ export class Game {
   resetToTitle() {
     this.phase = PHASE.TITLE;
     this.sortie = SORTIES[this.sortieIndex];
+    this.plane = effectivePlane(this.sortie, this.hangar);
+    this.fuelCapacity = this.sortie.fuel + this.plane.fuelBonus;
+    this.wind = new Wind(this.sortie.wind);
     this.score = 0;
     this.ringsPassed = 0;
     this.perfectRings = 0;
-    this.fuel = this.sortie.fuel;
+    this.comboCount = 0;
+    this.comboTimer = 0;
+    this.bestCombo = 0;
+    this.fuel = this.fuelCapacity;
     this.damage = 0;
     this.timeLeft = this.sortie.timeLimit;
     this.timeFlown = 0;
@@ -61,7 +78,10 @@ export class Game {
     this.pitch = 0;
     this.bank = 0;
     this.heading = 0;
+    this.verticalSpeed = 0;
+    this.stalled = false;
     this.landed = false;
+    this.landingQuality = '';
     this.message = '';
     this.messageUntil = 0;
     this.warnedFuel = false;
@@ -69,6 +89,7 @@ export class Game {
     this.position = { x: WORLD.runway.x, y: 27, z: WORLD.runway.z + 120 };
     this.world.buildRings(this.sortie.rings);
     this.world.setNextRing(0, 0);
+    this.world.applySortieLook(this.sortie);
     this.placePlane();
   }
 
@@ -87,8 +108,56 @@ export class Game {
     this.messageUntil = this.timeFlown + seconds;
   }
 
+  /** The score multiplier the next ring earns at the current chain. */
+  get comboMultiplier() {
+    return Math.min(1 + this.comboCount * COMBO.stepPerRing, COMBO.maxMultiplier);
+  }
+
+  /** Damage or a long gap between rings breaks the combo chain. */
+  breakCombo() {
+    this.comboCount = 0;
+    this.comboTimer = 0;
+  }
+
+  /** Score a flown ring: base points times the combo multiplier, plus
+      the ring's time and fuel bonuses. Called by the mission rules. */
+  scoreRing(perfect) {
+    const base = perfect ? SCORE.perfectRing : SCORE.ring;
+    const points = Math.round(base * this.comboMultiplier);
+    this.score += points;
+    if (perfect) this.perfectRings += 1;
+    this.ringsPassed += 1;
+    this.comboCount += 1;
+    this.bestCombo = Math.max(this.bestCombo, this.comboCount);
+    this.comboTimer = COMBO.windowSeconds;
+    this.timeLeft += RING.timeBonus;
+    this.fuel = Math.min(this.fuelCapacity, this.fuel + RING.fuelBonus);
+    this.audio.ring(perfect);
+    const chain = this.comboMultiplier > 1 ? `  COMBO ×${this.comboMultiplier.toFixed(2)}` : '';
+    this.showMessage(
+      perfect
+        ? `PERFECT RING! +${points}${chain}`
+        : `Ring ${this.ringsPassed}/${this.sortie.rings.length}  +${points}${chain}`,
+      2.2,
+    );
+    this.onEvent('ring', { index: this.ringsPassed, perfect, score: this.score });
+  }
+
+  /** Buy the next hangar upgrade level with banked score. */
+  buyUpgrade(id) {
+    const bought = buyUpgrade(this.hangar, id);
+    if (bought) {
+      // The plane the title screen shows wears the new numbers at once.
+      this.plane = effectivePlane(this.sortie, this.hangar);
+      this.fuelCapacity = this.sortie.fuel + this.plane.fuelBonus;
+      this.fuel = this.fuelCapacity;
+    }
+    return bought;
+  }
+
   /** Per-frame update. `input` is {pitch, bank, throttleUp, throttleDown}. */
   update(dt, input) {
+    this.elapsed += dt;
     if (this.phase === PHASE.FLYING) this.updateFlying(dt, input);
     // Clouds drift in every phase so the title screen stays alive.
     this.world.updateClouds(dt, this.sortie.storm && this.phase === PHASE.FLYING);
@@ -103,40 +172,19 @@ export class Game {
       return this.endSortie(PHASE.TIME_UP, 'Out of time — the sortie window closed.');
     }
 
-    // Throttle: Shift / W raises it, S / Ctrl lowers it, 0..1.
-    if (input.throttleUp) this.throttle = clamp(this.throttle + dt * 0.55, 0, 1);
-    if (input.throttleDown) this.throttle = clamp(this.throttle - dt * 0.55, 0, 1);
+    // The combo chain decays: dawdle too long and it is gone.
+    if (this.comboTimer > 0) {
+      this.comboTimer -= dt;
+      if (this.comboTimer <= 0) this.breakCombo();
+    }
 
-    // Pitch and bank ease toward the stick, so the plane feels weighty.
-    const targetPitch = clamp(input.pitch, -1, 1) * 0.5;
-    const targetBank = clamp(input.bank, -1, 1) * 0.9;
-    this.pitch = lerp(this.pitch, targetPitch, Math.min(1, dt * 3.2));
-    this.bank = lerp(this.bank, targetBank, Math.min(1, dt * 3.2));
-
-    // Speed chases the throttle; drag grows with speed squared (full
-    // throttle tops out near 85 m/s, cruise near 60).
-    const targetSpeed = this.throttle * PLANE.maxSpeed;
-    const accel = this.throttle * PLANE.throttleAccel - PLANE.drag * this.speed * this.speed * 0.0164;
-    this.speed = clamp(this.speed + accel * dt, 0, PLANE.maxSpeed);
-
-    // Banking turns the plane; pitching climbs or dives.
-    this.heading += this.bank * PLANE.turnFromBank * dt * clamp(this.speed / PLANE.cruiseSpeed, 0.25, 1.4);
-    const stalled = this.speed < PLANE.minFlySpeed;
-    const ground = terrainHeight(this.position.x, this.position.z);
-    // A stalled plane sinks — unless it is already on its wheels, in which
-    // case it rolls along the ground until it has flying speed again.
-    const clearance = this.position.y - Math.max(ground, WORLD.seaLevel);
-    const climb = stalled
-      ? (clearance > 6 ? -PLANE.gravitySink : 0)
-      : Math.sin(this.pitch) * this.speed * PLANE.climbFromPitch;
-    const vx = -Math.sin(this.heading) * this.speed;
-    const vz = -Math.cos(this.heading) * this.speed;
-    this.position.x += vx * dt;
-    this.position.z += vz * dt;
-    this.position.y += climb * dt;
+    this.wind.update(dt);
+    const result = integrateFlight(this, input, dt, this.plane, this.wind.push);
+    this.stalled = result.stalled;
+    this.verticalSpeed = result.verticalSpeed;
 
     // Fuel burns with throttle; empty tank means gliding down.
-    const burn = PLANE.fuelBurnIdle + (PLANE.fuelBurn - PLANE.fuelBurnIdle) * this.throttle;
+    const burn = this.plane.fuelBurnIdle + (this.plane.fuelBurn - this.plane.fuelBurnIdle) * this.throttle;
     this.fuel = Math.max(0, this.fuel - burn * dt);
     if (this.fuel < 20 && !this.warnedFuel) {
       this.warnedFuel = true;
@@ -150,115 +198,7 @@ export class Game {
       }
     }
 
-    this.checkRings();
-    this.checkClouds(dt);
-    this.checkGround(dt);
-    this.checkLanding();
-    this.checkBounds();
-  }
-
-  /** Fly through the next ring (in order) to score. */
-  checkRings() {
-    if (this.ringsPassed >= this.sortie.rings.length) return;
-    const ring = this.sortie.rings[this.ringsPassed];
-    const dx = this.position.x - ring[0];
-    const dy = this.position.y - ring[1];
-    const dz = this.position.z - ring[2];
-    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (dist < RING.radius) {
-      const perfect = dist < 9;
-      const points = perfect ? SCORE.perfectRing : SCORE.ring;
-      this.score += points;
-      if (perfect) this.perfectRings += 1;
-      this.ringsPassed += 1;
-      this.timeLeft += RING.timeBonus;
-      this.fuel = Math.min(this.sortie.fuel, this.fuel + RING.fuelBonus);
-      this.audio.ring(perfect);
-      this.showMessage(
-        perfect
-          ? `PERFECT RING! +${points}`
-          : `Ring ${this.ringsPassed}/${this.sortie.rings.length}  +${points}`,
-        2.2,
-      );
-      this.world.setNextRing(this.ringsPassed, this.ringsPassed);
-      this.onEvent('ring', { index: this.ringsPassed, perfect, score: this.score });
-      if (this.ringsPassed === this.sortie.rings.length) {
-        this.showMessage('All rings flown — land on the runway to finish!', 4);
-      }
-    }
-  }
-
-  /** Storm clouds (and any cloud on the hard sortie) damage the plane. */
-  checkClouds(dt) {
-    if (!this.sortie.storm && this.sortie.clouds < 12) return;
-    for (const cloud of this.world.clouds) {
-      const dx = this.position.x - cloud.position.x;
-      const dy = this.position.y - cloud.position.y;
-      const dz = this.position.z - cloud.position.z;
-      if (Math.abs(dx) < 42 && Math.abs(dy) < 16 && Math.abs(dz) < 30) {
-        this.damage = Math.min(PLANE.maxDamage, this.damage + 26 * dt);
-        if (this.damage >= PLANE.maxDamage) {
-          return this.endSortie(PHASE.CRASHED, 'Torn apart inside a storm cloud.');
-        }
-      }
-    }
-  }
-
-  /** Terrain and sea are solid: hit either one at speed and the sortie ends.
-      Touch down gently and the plane rolls along the ground instead — the
-      landing check then decides whether it counts as a landing. */
-  checkGround(dt) {
-    const ground = terrainHeight(this.position.x, this.position.z);
-    const minAlt = Math.max(ground, WORLD.seaLevel) + 2.2;
-    if (this.position.y <= minAlt) {
-      if (this.speed > 25) {
-        this.position.y = minAlt;
-        const reason =
-          ground > 2 ? 'Crashed into the mountainside.' : 'Ditched in the sea.';
-        return this.endSortie(PHASE.CRASHED, reason);
-      }
-      this.position.y = minAlt;
-      // Rolling friction on the ground.
-      this.speed = Math.max(0, this.speed - 6 * dt);
-    }
-  }
-
-  /** A landing counts when slow, low, level and over the runway strip —
-      and only after the plane has actually flown (no instant landing on
-      takeoff: the sortie needs a few seconds in the air first). */
-  checkLanding() {
-    const rw = WORLD.runway;
-    const overStrip =
-      Math.abs(this.position.x - rw.x) < rw.width / 2 + 6 &&
-      Math.abs(this.position.z - rw.z) < rw.length / 2;
-    const low = this.position.y < 30;
-    const slow = this.speed < 34;
-    const level = Math.abs(this.bank) < 0.25 && Math.abs(this.pitch) < 0.18;
-    const hasFlown = this.timeFlown > 8;
-    if (overStrip && low && slow && level && hasFlown) {
-      const smooth = this.speed < 24 && this.damage < 40;
-      this.score += smooth ? SCORE.smoothLanding : SCORE.landing;
-      this.score += Math.round(this.timeLeft) * SCORE.timeBonusPerSecond;
-      this.score += Math.round(this.fuel) * SCORE.fuelBonusPerUnit;
-      this.landed = true;
-      this.position.y = 27;
-      this.speed = 0;
-      this.throttle = 0;
-      this.audio.landing();
-      const finishedAllRings = this.ringsPassed === this.sortie.rings.length;
-      this.endSortie(PHASE.LANDED, finishedAllRings ? 'Sortie complete — welcome home.' : 'Landed safely, but rings were missed.');
-    }
-  }
-
-  /** Flying out of the archipelago turns the plane back with a warning. */
-  checkBounds() {
-    const half = WORLD.size / 2 - 60;
-    if (Math.abs(this.position.x) > half || Math.abs(this.position.z) > half) {
-      this.heading += Math.PI;
-      this.position.x = clamp(this.position.x, -half, half);
-      this.position.z = clamp(this.position.z, -half, half);
-      this.showMessage('Edge of the chart — turning back!', 2.5);
-    }
+    this.rules.checkAll(dt);
   }
 
   endSortie(phase, reason) {
@@ -270,6 +210,11 @@ export class Game {
     if (this.score > prevBest) {
       this.best[key] = this.score;
       this.saveBest();
+    }
+    // Every point scored is banked for the hangar, win or lose.
+    if (this.score > 0) {
+      this.hangar.bank += this.score;
+      saveHangar(this.hangar);
     }
     if (phase === PHASE.LANDED && this.ringsPassed === this.sortie.rings.length) {
       this.unlocked = Math.max(this.unlocked, Math.min(SORTIES.length, this.sortieIndex + 2));
@@ -289,31 +234,29 @@ export class Game {
     // Spin the prop with throttle (and a slow idle on the title screen).
     const spin = (0.25 + this.throttle * 2.4) * (this.phase === PHASE.TITLE ? 0.4 : 1);
     p.userData.prop.rotation.z += spin;
+    // The blur disc fades in as the prop spins up; the blades fade out.
+    const disc = p.userData.propDisc;
+    if (disc) {
+      const blur = Math.min(1, Math.max(0, (this.throttle - 0.2) * 1.6));
+      disc.material.opacity = blur * 0.5;
+      for (const blade of p.userData.blades) blade.material.opacity = 1 - blur * 0.75;
+    }
+    // Navigation lights blink twice a second.
+    const lit = Math.floor(this.elapsed * 2) % 2 === 0;
+    p.userData.navL.material.color.setHex(lit ? 0xff2222 : 0x661111);
+    p.userData.navR.material.color.setHex(lit ? 0x22ff66 : 0x116633);
+    // The parcel crates ride only on sorties that carry cargo.
+    if (p.userData.crate) p.userData.crate.visible = (this.sortie.cargo || 0) > 0;
   }
 
   /** Chase camera: behind and above the plane, looking ahead. */
   cameraPose() {
-    const back = 26;
-    const up = 8;
-    const cx = this.position.x + Math.sin(this.heading) * back;
-    const cz = this.position.z + Math.cos(this.heading) * back;
-    const cy = this.position.y + up;
-    const lx = this.position.x - Math.sin(this.heading) * 40;
-    const lz = this.position.z - Math.cos(this.heading) * 40;
-    const ly = this.position.y + Math.sin(this.pitch) * 24 - 2;
-    return { eye: { x: cx, y: cy, z: cz }, look: { x: lx, y: ly, z: lz } };
+    return chaseCameraPose(this);
   }
 
-  /** Slow orbit around the parked plane for the title screen. The look
-      target sits to the right of the plane so the plane reads at the left
-      of the frame, clear of the centred menu panel. */
+  /** Slow orbit around the parked plane for the title screen. */
   titleCameraPose(t) {
-    const a = t * 0.12;
-    const r = 55;
-    return {
-      eye: { x: this.position.x + Math.sin(a) * r, y: 44 + Math.sin(t * 0.3) * 3, z: this.position.z + Math.cos(a) * r },
-      look: { x: this.position.x + 26, y: 28, z: this.position.z - 20 },
-    };
+    return titleCameraPose(this, t);
   }
 
   get bestScore() {

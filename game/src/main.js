@@ -6,6 +6,8 @@
 // every run. Without it, the game plays normally.
 import * as THREE from 'three';
 import { AudioEngine } from './audio.js';
+import { fovForSpeed } from './camera.js';
+import { Effects } from './effects.js';
 import { Game, PHASE } from './game.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
@@ -29,9 +31,10 @@ const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerH
 
 const world = new World(seed);
 const audio = new AudioEngine();
+const effects = new Effects(world.scene);
 const game = new Game(world, audio, (event) => {
   if (event === 'takeoff' || event === 'ring' || event === 'end') hud.hideOverlay();
-});
+}, effects);
 const hud = new Hud(game);
 const input = new Input();
 
@@ -60,6 +63,16 @@ document.getElementById('overlay').addEventListener('click', (e) => {
     audio.start();
     audio.resume();
     game.startSortie(Number(sortieBtn.dataset.sortie));
+    hud.hideOverlay();
+    return;
+  }
+  const upgradeBtn = e.target.closest('[data-upgrade]');
+  if (upgradeBtn && !upgradeBtn.disabled) {
+    audio.start();
+    audio.resume();
+    if (game.buyUpgrade(upgradeBtn.dataset.upgrade)) audio.landing();
+    // hideOverlay clears the HUD's overlay cache, so the next frame
+    // rebuilds the title screen with the new bank and upgrade levels.
     hud.hideOverlay();
     return;
   }
@@ -98,6 +111,10 @@ let shotFrames = 0;
 const isShot = Boolean(shotName);
 if (isShot) {
   stageShot(shotName, game, world);
+  // The staged frame is fixed: snap the FOV kick to its final value
+  // instead of letting it ease in over the few painted frames.
+  camera.fov = fovForSpeed(game.speed, game.plane.maxSpeed);
+  camera.updateProjectionMatrix();
   hud.update(0);
 }
 
@@ -110,7 +127,12 @@ function frame(now) {
     input.poll();
     game.update(dt, input);
     audio.update(game.throttle, game.speed, game.phase === PHASE.FLYING);
+    effects.updateExhaust(dt, game, game.throttle, game.phase === PHASE.FLYING);
+    effects.updateDamageSmoke(dt, game, game.phase === PHASE.FLYING ? game.damage : 0);
   }
+  effects.update(isShot ? 0 : dt);
+  world.updateAmbient(now / 1000);
+  renderer.toneMappingExposure = world.exposure;
 
   // Camera: orbit on the title screen, chase cam in flight, frozen on end.
   let pose;
@@ -120,9 +142,21 @@ function frame(now) {
     pose = game.cameraPose();
   }
   camera.position.set(pose.eye.x, pose.eye.y, pose.eye.z);
+  // Stall buffet: a stalled plane shakes in the camera's hands.
+  if (!isShot && game.phase === PHASE.FLYING && game.stalled && game.speed > 4) {
+    const t = now / 1000;
+    camera.position.x += Math.sin(t * 47) * 0.35;
+    camera.position.y += Math.sin(t * 59 + 1.3) * 0.3;
+  }
   camera.lookAt(pose.look.x, pose.look.y, pose.look.z);
   // Roll the camera a touch with the bank so turns feel banked.
   camera.rotateZ(game.bank * 0.22);
+  // Speed FOV kick: the world leans in as she gets fast.
+  const targetFov = fovForSpeed(game.speed, game.plane.maxSpeed);
+  if (Math.abs(camera.fov - targetFov) > 0.05) {
+    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 3 + 0.02);
+    camera.updateProjectionMatrix();
+  }
 
   // Spin the prop and bob the rings gently.
   world.plane.userData.prop.rotation.z += (0.3 + game.throttle * 2.2) * dt * 60 * 0.16;

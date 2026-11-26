@@ -13,7 +13,7 @@ export const WORLD = {
     { x: 1250, z: -900, r: 560, h: 150 }, // mountain island, north-east
     { x: 1150, z: 950, r: 480, h: 70 }, // palm island, south-east
     { x: -1250, z: 900, r: 430, h: 120 }, // crag island, south-west
-    { x: 300, z: -1500, r: 380, h: 88 }, // far north islet
+    { x: 300, z: -1500, r: 380, h: 88 }, // far north islet, holds the lighthouse
     { x: -500, z: 1500, r: 360, h: 60 }, // far south islet
   ],
   runway: { x: 0, z: -60, heading: 0, length: 420, width: 34 }, // north-south strip
@@ -49,9 +49,39 @@ export const RING = {
   fuelBonus: 6,
 };
 
+// Combo: consecutive rings flown without taking damage raise a score
+// multiplier. The chain survives for COMBO.windowSeconds after each ring;
+// storm damage or a long gap resets it. Multiplier grows a quarter step
+// per chained ring, capped at COMBO.maxMultiplier.
+export const COMBO = {
+  windowSeconds: 24,
+  stepPerRing: 0.25,
+  maxMultiplier: 3,
+};
+
+// Wind: only the storm sortie has real wind. A steady push from the west
+// plus gusts that swell and fade on a slow sine, so the pilot has to hold
+// a crab angle on the ring line and on final approach.
+export const WIND = {
+  direction: { x: 1, z: 0.35 }, // blowing toward +x (from the west)
+  baseSpeed: 5, // m/s of steady push
+  gustSpeed: 9, // extra m/s at the top of a gust
+  gustPeriod: 11, // seconds per gust swell
+};
+
+// Landing quality, judged at touchdown from airspeed and sink rate.
+// The readout (SMOOTH / FIRM / HARD) and its bonus land in the results.
+export const LANDING = {
+  smooth: { maxSpeed: 24, maxSink: 2.5, bonus: 700, label: 'SMOOTH' },
+  firm: { maxSpeed: 31, maxSink: 5, bonus: 400, label: 'FIRM' },
+  hard: { bonus: 150, label: 'HARD' },
+};
+
 // Three sorties, each a different way to fly the same archipelago.
 // Rings are [x, y, z] waypoints; the sortie ends when the last ring is flown
 // and the plane lands back on the runway (or the timer / fuel runs out).
+// `tod` picks the time-of-day look, `cargo` is the load in kilograms the
+// flight model feels, `wind` turns on the gusting crosswind.
 export const SORTIES = [
   {
     id: 'island-hop',
@@ -70,6 +100,9 @@ export const SORTIES = [
     fuel: 100,
     clouds: 6,
     storm: false,
+    tod: 'dawn',
+    cargo: 0,
+    wind: false,
   },
   {
     id: 'parcel-run',
@@ -90,6 +123,9 @@ export const SORTIES = [
     fuel: 85,
     clouds: 12,
     storm: false,
+    tod: 'noon',
+    cargo: 140,
+    wind: false,
   },
   {
     id: 'storm-circuit',
@@ -112,14 +148,18 @@ export const SORTIES = [
     fuel: 100,
     clouds: 20,
     storm: true,
+    tod: 'dusk',
+    cargo: 60,
+    wind: true,
   },
 ];
 
 export const SCORE = {
   ring: RING.passScore,
   perfectRing: RING.perfectScore,
-  landing: 400,
-  smoothLanding: 700, // gentle touchdown, low vertical speed
+  landing: LANDING.firm.bonus,
+  smoothLanding: LANDING.smooth.bonus,
+  hardLanding: LANDING.hard.bonus,
   parcel: 100,
   timeBonusPerSecond: 5,
   fuelBonusPerUnit: 4,
