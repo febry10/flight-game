@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sky Courier — a little flight game</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.min.js" } }
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<!-- Instruments -->
+<div id="hud" aria-label="Flight instruments">
+  <div class="hud-left">
+    <div class="gauge"><label>SPD <span>kt</span></label><b id="speed">0</b></div>
+    <div class="gauge"><label>ALT <span>ft</span></label><b id="alt">0</b></div>
+    <div class="gauge"><label>HDG</label><b id="heading">000° N</b></div>
+    <div class="gauge"><label>THR</label><b id="throttle">0%</b></div>
+  </div>
+  <div class="hud-right">
+    <canvas id="minimap" width="150" height="150" aria-label="Chart"></canvas>
+    <div class="gauge"><label>SCORE</label><b id="score">0</b></div>
+    <div class="gauge"><label>RINGS</label><b id="rings">0/6</b></div>
+    <div class="gauge"><label>TIME</label><b id="timer">4:00</b></div>
+  </div>
+  <div class="hud-bottom">
+    <div class="bar-row"><label>FUEL <span id="fuel">100</span></label><div class="bar"><div id="fuelbar"></div></div></div>
+    <div class="bar-row"><label>DMG <span id="damage">0%</span></label><div class="bar"><div id="damagebar"></div></div></div>
+    <div class="sortie-tag" id="sortie-name">Island Hop</div>
+  </div>
+  <div id="message" role="status"></div>
+</div>
+
+<!-- Title / pause / results overlay -->
+<div id="overlay">
+  <div class="panel">
+    <h1 id="overlay-title">SKY COURIER</h1>
+    <p id="overlay-body"></p>
+    <div id="overlay-stats"></div>
+    <div id="menu-list"></div>
+  </div>
+</div>
+
+<!-- Touch controls (shown only on coarse-pointer devices) -->
+<div id="touch-pad" class="hidden">
+  <div class="touch-group">
+    <button id="btn-bank-left" aria-label="Bank left">◀</button>
+    <button id="btn-bank-right" aria-label="Bank right">▶</button>
+  </div>
+  <div class="touch-group">
+    <button id="btn-pitch-up" aria-label="Pitch up">▲</button>
+    <button id="btn-pitch-down" aria-label="Pitch down">▼</button>
+  </div>
+  <div class="touch-group">
+    <button id="btn-throttle-up" aria-label="Throttle up">THR +</button>
+    <button id="btn-throttle-down" aria-label="Throttle down">THR −</button>
+  </div>
+</div>
+
+<button id="mute-btn" aria-label="Toggle sound">🔊</button>
+<div id="hint">W/S pitch · A/D bank · Shift/Ctrl throttle · P pause · M mute</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
