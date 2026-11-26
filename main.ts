@@ -9,11 +9,16 @@
 // dossier.json there — the summary the judge reads — using the vendored
 // make.fun library in vendor/makefun-game.ts.
 //
-// In the game itself, the player flies a little orange cargo plane around an
-// island archipelago: throttle, pitch and bank through glowing rings, watch
-// the fuel gauge and the storm clouds, and land back on the runway to bank
-// the score. Three sorties (Island Hop, Parcel Run, Storm Circuit) offer
-// different ring courses, timers and weather, with a best score per sortie.
+// Version 2 of the game: the player flies a little orange cargo plane around
+// an island archipelago — dawn, noon and dusk sorties over one terrain —
+// threading glowing rings in combo chains, hauling cargo that bends the
+// flight model, leaning against a gusting crosswind in the storm, and
+// landing on the runway to bank the score for hangar upgrades. The game's
+// own source is split into single-job modules: flightmodel.js integrates
+// the physics, missions.js judges rings, damage and touchdown quality,
+// weather.js owns the hours and the wind, upgrades.js the hangar,
+// effects.js the particles, world.js the archipelago, hud.js the
+// instruments, and game.js wires them together frame by frame.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
