@@ -26,10 +26,30 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
+// Sun shadows: one directional shadow map that follows the plane, so
+// the ground detail (fields, village, trees) grounds the plane in the
+// frame instead of floating over flat colour.
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 2, 9000);
 
 const world = new World(seed);
+// Configure the sun's shadow camera once: a 420 m box around wherever
+// the light is aimed (the frame loop aims it at the plane each frame).
+{
+  const sun = world.sunLight;
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -210;
+  sun.shadow.camera.right = 210;
+  sun.shadow.camera.top = 210;
+  sun.shadow.camera.bottom = -210;
+  sun.shadow.camera.near = 50;
+  sun.shadow.camera.far = 5200;
+  sun.shadow.bias = -0.0006;
+  world.scene.add(sun.target);
+}
 const audio = new AudioEngine();
 const effects = new Effects(world.scene);
 const game = new Game(world, audio, (event) => {
@@ -142,6 +162,23 @@ function frame(now) {
     pose = game.cameraPose();
   }
   camera.position.set(pose.eye.x, pose.eye.y, pose.eye.z);
+  // Cover-shot push-in: the staged start frame sits closer and lower on
+  // the plane than the playable chase cam, so the plane fills the frame
+  // the way a poster shot would frame it.
+  if (isShot && shotName === 'start') {
+    camera.position.x += (game.position.x - camera.position.x) * 0.38;
+    camera.position.y += (game.position.y + 3 - camera.position.y) * 0.3;
+    camera.position.z += (game.position.z - camera.position.z) * 0.38;
+  }
+  // Aim the sun's shadow box at the plane: the light hangs at the
+  // sortie's sun offset from the plane and looks straight at it.
+  const sunOff = world.sunOffset || { x: 0, y: 1000, z: 0 };
+  world.sunLight.position.set(
+    game.position.x + sunOff.x,
+    game.position.y + sunOff.y,
+    game.position.z + sunOff.z,
+  );
+  world.sunLight.target.position.set(game.position.x, game.position.y, game.position.z);
   // Stall buffet: a stalled plane shakes in the camera's hands.
   if (!isShot && game.phase === PHASE.FLYING && game.stalled && game.speed > 4) {
     const t = now / 1000;

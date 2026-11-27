@@ -177,6 +177,7 @@ export class Hud {
         `<div><span>Score</span><b>${g.score}</b></div>` +
         `<div><span>Rings</span><b>${g.ringsPassed}/${g.ringsTotal}</b></div>` +
         `<div><span>Perfect rings</span><b>${g.perfectRings}</b></div>` +
+        `<div><span>Near misses</span><b>${g.nearMisses}</b></div>` +
         `<div><span>Touchdown</span><b>${g.landingQuality || '—'}</b></div>` +
         `<div><span>Best combo</span><b>${g.bestCombo} rings</b></div>` +
         `<div><span>Time left</span><b>${Math.max(0, Math.ceil(g.timeLeft))}s</b></div>` +
@@ -195,6 +196,7 @@ export class Hud {
       stats.innerHTML =
         `<div><span>Score</span><b>${g.score}</b></div>` +
         `<div><span>Rings</span><b>${g.ringsPassed}/${g.ringsTotal}</b></div>` +
+        `<div><span>Near misses</span><b>${g.nearMisses}</b></div>` +
         `<div><span>Best on this sortie</span><b>${g.bestScore}</b></div>`;
       menu.appendChild(this.makeButton('Try again', 'retry'));
       menu.appendChild(this.makeButton('Back to menu', 'menu'));

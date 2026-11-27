@@ -6,7 +6,8 @@ import * as THREE from 'three';
 import { COLOURS, WORLD } from './config.js';
 import { makePuffTexture } from './effects.js';
 import { clamp, mulberry32, smoothstep } from './random.js';
-import { paletteFor } from './weather.js';
+import { buildScenery } from './scenery.js';
+import { Rain, paletteFor } from './weather.js';
 
 /** Analytic terrain height at (x, z): sum of smooth island bumps, with the
     runway strip on the home island flattened to 24 m (fully flat over the
@@ -51,14 +52,43 @@ export function buildPlane() {
   nose.rotation.x = -Math.PI / 2;
   nose.position.z = -4.6;
   plane.add(nose);
-  // Canopy: a glossy bubble the pilot sits under.
+  // Canopy: a dark smoked bubble the pilot sits under — dark enough to
+  // read as glass against the orange body from the chase camera.
   const canopy = new THREE.Mesh(
     new THREE.SphereGeometry(0.85, 16, 12),
-    new THREE.MeshStandardMaterial({ color: 0x9fd4e8, roughness: 0.15, metalness: 0.4 }),
+    new THREE.MeshStandardMaterial({ color: 0x1d3038, roughness: 0.12, metalness: 0.55 }),
   );
   canopy.scale.set(1, 0.75, 1.9);
   canopy.position.set(0, 0.85, -0.9);
   plane.add(canopy);
+  // Fuselage stripe: a navy cheatline running the body's length, so the
+  // plane carries its livery into every still frame.
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.36, 0.34, 6.4), trimMat);
+  stripe.position.set(0, 0.12, 0.1);
+  plane.add(stripe);
+  // Tail registration: the fin wears the plane's call sign, drawn on a
+  // canvas — "SKY-1" in navy on the trim-coloured fin.
+  const regCanvas = document.createElement('canvas');
+  regCanvas.width = 128;
+  regCanvas.height = 128;
+  const regCtx = regCanvas.getContext('2d');
+  regCtx.fillStyle = '#1f3a5f';
+  regCtx.fillRect(0, 0, 128, 128);
+  regCtx.fillStyle = '#f5f2e8';
+  regCtx.font = 'bold 44px sans-serif';
+  regCtx.textAlign = 'center';
+  regCtx.fillText('SKY', 64, 56);
+  regCtx.fillText('-1', 64, 104);
+  const regTexture = new THREE.CanvasTexture(regCanvas);
+  const finMat = new THREE.MeshStandardMaterial({ map: regTexture, roughness: 0.5, metalness: 0.2 });
+  // Wing struts: two slim braces from the lower fuselage out to the
+  // wings, the bush-plane detail the silhouette was missing.
+  for (const side of [-1, 1]) {
+    const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.4, 6), trimMat);
+    strut.position.set(side * 2.2, -0.85, -0.4);
+    strut.rotation.z = side * 1.05;
+    plane.add(strut);
+  }
   // Main wings, low on the fuselage, slightly swept.
   const wingGeo = new THREE.BoxGeometry(13.5, 0.22, 2.6);
   const wing = new THREE.Mesh(wingGeo, wingMat);
@@ -74,7 +104,7 @@ export function buildPlane() {
   const tailWing = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.18, 1.5), wingMat);
   tailWing.position.set(0, 0.25, 3.1);
   plane.add(tailWing);
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.2, 1.9), trimMat);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.2, 1.9), finMat);
   fin.position.set(0, 1.15, 3.1);
   plane.add(fin);
   // Propeller: hub + two blades, spun by the game loop. As the prop
@@ -129,6 +159,12 @@ export function buildPlane() {
   navR.position.set(6.9, -0.25, -0.4);
   plane.add(navR);
 
+  // Every solid part casts the sun shadow the renderer now draws.
+  plane.traverse((o) => {
+    if (o.isMesh) o.castShadow = true;
+  });
+  propDisc.castShadow = false;
+
   plane.userData.prop = prop;
   plane.userData.propDisc = propDisc;
   plane.userData.blades = [blade1, blade2];
@@ -155,7 +191,10 @@ export class World {
     this.buildVegetation();
     this.buildHarbour();
     this.buildLighthouse();
+    this.scene.add(buildScenery(seed));
     this.buildClouds();
+    this.rain = new Rain(seed);
+    this.scene.add(this.rain.mesh);
     this.plane = buildPlane();
     this.scene.add(this.plane);
     this.exposure = 1.05;
@@ -175,6 +214,14 @@ export class World {
       new THREE.MeshBasicMaterial({ color: 0xfff3c4, fog: false, transparent: true, opacity: 0.95 }),
     );
     this.scene.add(this.sunDisc);
+    // The sun's glow: a soft additive halo sprite around the disc, so
+    // dawn and dusk shots bloom instead of showing a flat circle.
+    this.sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: makePuffTexture(), color: 0xffdf9e, transparent: true, opacity: 0.55,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    }));
+    this.sunGlow.scale.set(760, 760, 1);
+    this.scene.add(this.sunGlow);
   }
 
   buildLights() {
@@ -211,9 +258,16 @@ export class World {
     this.sunLight.color.setHex(pal.sunColour);
     this.sunLight.intensity = pal.sunIntensity;
     this.sunLight.position.set(pal.sunPosition.x, pal.sunPosition.y, pal.sunPosition.z);
+    // The frame loop re-hangs the light at this offset from the plane
+    // each frame so its shadow box can follow the flight.
+    this.sunOffset = pal.sunPosition;
     this.sunDisc.position.set(pal.sunPosition.x * 1.6, pal.sunPosition.y * 1.6, pal.sunPosition.z * 1.6);
     this.sunDisc.material.color.setHex(pal.sunColour);
     this.sunDisc.lookAt(0, 0, 0);
+    this.sunGlow.position.copy(this.sunDisc.position);
+    this.sunGlow.material.color.setHex(pal.sunColour);
+    // The storm curtain rides only on storm sorties.
+    this.rain.setActive(Boolean(sortie.storm));
     this.exposure = pal.exposure;
   }
 
@@ -279,6 +333,7 @@ export class World {
     geo.computeVertexNormals();
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
     const terrain = new THREE.Mesh(geo, mat);
+    terrain.receiveShadow = true;
     this.scene.add(terrain);
   }
 
@@ -305,6 +360,30 @@ export class World {
         group.add(bar);
       }
     }
+    // Runway edge lights: small emissive globes down both edges, so the
+    // strip reads at dawn and dusk and an approach shot has a light line
+    // to fly down.
+    const edgeMat = new THREE.MeshBasicMaterial({ color: 0xffe9a8 });
+    const edgeGeo = new THREE.SphereGeometry(0.55, 8, 6);
+    for (let d = -rw.length / 2 + 12; d <= rw.length / 2 - 12; d += 42) {
+      for (const side of [-1, 1]) {
+        const bulb = new THREE.Mesh(edgeGeo, edgeMat);
+        bulb.position.set(rw.x + side * (rw.width / 2 + 2.5), 25.6, rw.z + d);
+        group.add(bulb);
+      }
+    }
+    // PAPI lights beside the near threshold: two white, two red when the
+    // staged approach sits on the glide path — the classic four-box row.
+    const papiZ = rw.z + rw.length / 2 - 34;
+    const papiCols = [0xffffff, 0xffffff, 0xff3b30, 0xff3b30];
+    papiCols.forEach((c, i) => {
+      const box = new THREE.Mesh(
+        new THREE.BoxGeometry(1.6, 1, 1.2),
+        new THREE.MeshBasicMaterial({ color: c }),
+      );
+      box.position.set(rw.x - rw.width / 2 - 7, 25.4, papiZ + i * 3.2);
+      group.add(box);
+    });
     // A windsock and a little hangar beside the strip, both sitting on the
     // terrain as the height function reports it.
     const sockX = rw.x + 34;
@@ -356,6 +435,8 @@ export class World {
     const crownMat = new THREE.MeshStandardMaterial({ color: 0x2f6b2e, roughness: 0.9 });
     const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, spots.length);
     const crowns = new THREE.InstancedMesh(crownGeo, crownMat, spots.length);
+    crowns.castShadow = true;
+    crowns.receiveShadow = true;
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const e = new THREE.Euler();
@@ -499,27 +580,32 @@ export class World {
     return this.ringMeshes;
   }
 
-  /** Highlight the next ring in green, passed ones dimmed. */
+  /** Highlight the next ring in green; passed rings vanish outright —
+      a dimmed torus left hanging in the frame read as a rendering
+      artifact in stills, so a flown ring simply leaves the sky. */
   setNextRing(index, passedCount) {
     this.ringMeshes.forEach((m, i) => {
       if (i < passedCount) {
-        m.material.color.setHex(0x3a6b4a);
-        m.material.emissive.setHex(0x0a2a14);
+        m.visible = false;
       } else if (i === index) {
+        m.visible = true;
         m.material.color.setHex(COLOURS.ringNext);
         m.material.emissive.setHex(0x1d7a33);
       } else {
+        m.visible = true;
         m.material.color.setHex(COLOURS.ring);
         m.material.emissive.setHex(0x7a5a00);
       }
     });
   }
 
-  /** Per-frame ambient life: sea glitter breathing and the lighthouse
-      beam sweeping. Cheap, and it keeps even a paused frame alive. */
+  /** Per-frame ambient life: sea glitter breathing, the lighthouse
+      beam sweeping and the storm rain falling around the plane. Cheap,
+      and it keeps even a paused frame alive. */
   updateAmbient(t) {
     if (this.sparkleMat) this.sparkleMat.opacity = 0.38 + 0.22 * (0.5 + 0.5 * Math.sin(t * 1.7));
     if (this.lighthouseBeam) this.lighthouseBeam.rotation.y = t * 0.45;
+    if (this.rain && this.plane) this.rain.update(t, this.plane.position);
   }
 
   /** Drift clouds slowly; storm sorties drift faster. Called per frame. */

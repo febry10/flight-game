@@ -127,9 +127,10 @@ export class Effects {
     });
   }
 
-  /** Dark smoke trailing a badly damaged plane. */
+  /** Dark smoke trailing a badly damaged plane. The threshold sits at
+      40 so a moderately hurt plane already tells its story in stills. */
   updateDamageSmoke(dt, plane, damage) {
-    if (damage < 55) return;
+    if (damage < 40) return;
     this.spawn(plane.position.x, plane.position.y + 0.6, plane.position.z, {
       color: 0x2c2c30,
       vx: (Math.random() - 0.5) * 2,

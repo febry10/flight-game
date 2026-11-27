@@ -161,8 +161,23 @@ export const SCORE = {
   smoothLanding: LANDING.smooth.bonus,
   hardLanding: LANDING.hard.bonus,
   parcel: 100,
+  nearMiss: 50,
   timeBonusPerSecond: 5,
   fuelBonusPerUnit: 4,
+};
+
+// Near misses: threading close past the next ring without flying it, or
+// skimming the terrain at speed, pays a small bonus and pops a message —
+// the reward for the flying that looks dangerous in a still frame.
+// A ring near miss is a closest approach inside `ringBand` metres of
+// the ring's centre but outside the pass radius, seen as the plane
+// recedes again; a terrain skim is `skimHeight` metres or less above
+// the ground at `skimSpeed` or faster, at most once per cooldown.
+export const NEAR_MISS = {
+  ringBand: 46,
+  skimHeight: 7,
+  skimSpeed: 42,
+  skimCooldown: 6,
 };
 
 export const COLOURS = {

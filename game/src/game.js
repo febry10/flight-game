@@ -66,6 +66,7 @@ export class Game {
     this.score = 0;
     this.ringsPassed = 0;
     this.perfectRings = 0;
+    this.nearMisses = 0;
     this.comboCount = 0;
     this.comboTimer = 0;
     this.bestCombo = 0;
@@ -141,6 +142,20 @@ export class Game {
       2.2,
     );
     this.onEvent('ring', { index: this.ringsPassed, perfect, score: this.score });
+  }
+
+  /** Score a near miss: the mission rules spot the close call, this
+      banks the bonus and pops the message the HUD shows. */
+  scoreNearMiss(kind) {
+    this.nearMisses += 1;
+    this.score += SCORE.nearMiss;
+    this.showMessage(
+      kind === 'ring'
+        ? `NEAR MISS! +${SCORE.nearMiss} — threaded the ring's edge!`
+        : `NEAR MISS! +${SCORE.nearMiss} — skimmed the treetops!`,
+      1.8,
+    );
+    this.onEvent('near-miss', { kind, score: this.score });
   }
 
   /** Buy the next hangar upgrade level with banked score. */

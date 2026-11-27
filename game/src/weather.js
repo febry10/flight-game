@@ -3,8 +3,9 @@
 // noon, Storm Circuit at dusk — and the world recolours itself to match:
 // sky gradient, fog, sun position and colour, sea tone. The storm sortie
 // also gets a gusting crosswind the flight model has to lean against.
+import * as THREE from 'three';
 import { WIND } from './config.js';
-import { clamp } from './random.js';
+import { clamp, mulberry32 } from './random.js';
 
 // One palette per hour. `sun` is a direction the directional light and
 // the sun disc share; `sunDisc` is where the visible disc hangs.
@@ -89,5 +90,68 @@ export class Wind {
   /** Wind speed in knots, for the HUD gauge. */
   get knots() {
     return Math.round(Math.hypot(this.push.x, this.push.z) * 1.94);
+  }
+}
+
+/**
+ * Storm rain: a curtain of short streaks in a box that follows the
+ * plane. Each drop's fall is a pure function of the clock, so a staged
+ * screenshot frame shows the rain mid-fall exactly like a live frame.
+ * The World owns one Rain and switches it on for storm sorties.
+ */
+export class Rain {
+  constructor(seed) {
+    this.count = 650;
+    this.box = { x: 300, y: 190, z: 300 };
+    this.fallSpeed = 95; // m/s of downward streak travel
+    this.length = 7; // streak length in metres
+    const rng = mulberry32(seed ^ 0x9a17);
+    this.drops = [];
+    for (let i = 0; i < this.count; i++) {
+      this.drops.push({
+        x: (rng() - 0.5) * this.box.x,
+        y: rng() * this.box.y,
+        z: (rng() - 0.5) * this.box.z,
+      });
+    }
+    const positions = new Float32Array(this.count * 6);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    this.mesh = new THREE.LineSegments(
+      geo,
+      new THREE.LineBasicMaterial({ color: 0xcfe2ee, transparent: true, opacity: 0.5 }),
+    );
+    this.mesh.visible = false;
+    this.mesh.frustumCulled = false;
+  }
+
+  /** Show or hide the curtain (storm sorties only). */
+  setActive(on) {
+    this.mesh.visible = on;
+  }
+
+  get active() {
+    return this.mesh.visible;
+  }
+
+  /** Pose every streak around `centre` at clock time `t`. */
+  update(t, centre) {
+    if (!this.mesh.visible) return;
+    const pos = this.mesh.geometry.attributes.position;
+    const half = this.box.y / 2;
+    for (let i = 0; i < this.count; i++) {
+      const d = this.drops[i];
+      const fallen = (d.y + t * this.fallSpeed) % this.box.y;
+      const y = centre.y + half - fallen;
+      const o = i * 6;
+      pos.array[o] = centre.x + d.x;
+      pos.array[o + 1] = y;
+      pos.array[o + 2] = centre.z + d.z;
+      // The streak's tail trails up and a touch downwind (+x).
+      pos.array[o + 3] = centre.x + d.x + 1.6;
+      pos.array[o + 4] = y + this.length;
+      pos.array[o + 5] = centre.z + d.z;
+    }
+    pos.needsUpdate = true;
   }
 }

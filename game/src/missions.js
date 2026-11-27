@@ -4,22 +4,70 @@
 // score; this class reads the state each frame and calls back into the
 // Game when something happens (scoreRing, endSortie), so the rules sit
 // in one file and the flight model stays pure physics.
-import { LANDING, PLANE, RING, SCORE, WORLD } from './config.js';
+import { LANDING, NEAR_MISS, PLANE, RING, SCORE, WORLD } from './config.js';
 import { clamp } from './random.js';
 import { terrainHeight } from './world.js';
 
 export class MissionRules {
   constructor(game) {
     this.game = game;
+    // Near-miss tracking: the closest approach to the current ring so
+    // far, and the terrain-skim cooldown clock.
+    this.ringIndexSeen = -1;
+    this.ringMinDist = Infinity;
+    this.skimCooldown = 0;
   }
 
   /** Run every rule for this frame, in the order they can end a sortie. */
   checkAll(dt) {
     this.checkRings();
+    this.checkNearMiss(dt);
     this.checkClouds(dt);
     this.checkGround(dt);
     this.checkLanding();
     this.checkBounds();
+  }
+
+  /** Near misses: a closest approach to the next ring that threads its
+      edge without flying it, judged as the plane recedes; and terrain
+      skims at speed, judged on a cooldown so a long low run pays once. */
+  checkNearMiss(dt) {
+    const g = this.game;
+    this.skimCooldown = Math.max(0, this.skimCooldown - dt);
+    // Ring edge: track the approach to the ring currently in play.
+    if (g.ringsPassed < g.sortie.rings.length) {
+      if (this.ringIndexSeen !== g.ringsPassed) {
+        this.ringIndexSeen = g.ringsPassed;
+        this.ringMinDist = Infinity;
+      }
+      const ring = g.sortie.rings[g.ringsPassed];
+      const dx = g.position.x - ring[0];
+      const dy = g.position.y - ring[1];
+      const dz = g.position.z - ring[2];
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (dist < this.ringMinDist) {
+        this.ringMinDist = dist;
+      } else if (
+        this.ringMinDist >= RING.radius &&
+        this.ringMinDist < NEAR_MISS.ringBand &&
+        dist > this.ringMinDist + 6
+      ) {
+        g.scoreNearMiss('ring');
+        this.ringMinDist = Infinity;
+      }
+    }
+    // Terrain skim: fast and just above the ground, but clear of the
+    // ground-roll clamp (rolling sits exactly at ground + 2.2).
+    const clearance = g.position.y - terrainHeight(g.position.x, g.position.z);
+    if (
+      this.skimCooldown <= 0 &&
+      g.speed >= NEAR_MISS.skimSpeed &&
+      clearance > 2.6 &&
+      clearance <= NEAR_MISS.skimHeight
+    ) {
+      g.scoreNearMiss('terrain');
+      this.skimCooldown = NEAR_MISS.skimCooldown;
+    }
   }
 
   /** Fly through the next ring (in order) to score. */
